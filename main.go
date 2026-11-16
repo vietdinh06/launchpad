@@ -65,7 +65,7 @@ func createBuildContext(appPath string) (*bytes.Buffer, error) {
             }
 
             if info.Mode().IsRegular() {
-                totalSize = info.Size()
+                totalSize += info.Size()
 				if totalSize > maxContextSize {
 					return fmt.Errorf("build context exceeds 25 MiB")
 				}
@@ -147,7 +147,7 @@ func readBuildOutput(reader io.Reader) error {
 
 func validatePort(value string) error {
     port, err := strconv.Atoi(value)
-	if err != nil || port < 0 || port > 65536 {
+	if err != nil || port < 1 || port > 65535 {
         return fmt.Errorf("invalid port: %s", value)
 	}
 	return nil
@@ -210,12 +210,12 @@ func deployApplication(
 		},
 	)
     if err != nil {
-        log.Fatal("Build request failed: ", err)
+    	return fmt.Errorf("build request failed: %w", err)
     }
     defer buildResult.Body.Close()
 
     if err := readBuildOutput(buildResult.Body); err != nil {
-        log.Fatal(err)
+    	return fmt.Errorf("image build failed: %w", err)
     }
 
     // Check that the expected image was produced.
@@ -262,7 +262,7 @@ func deployApplication(
         created.ID,
         client.ContainerStartOptions{},
     )
-	
+
 	if err != nil {
         return fmt.Errorf("start container: %w", err)
     }
@@ -281,6 +281,12 @@ func deployApplication(
 func main() {
     fmt.Println("Launchpad Image Builder")
 
+    if len(os.Args) != 5 || strings.ToLower(os.Args[1]) != "deploy" {
+        fmt.Println("Usage:")
+        fmt.Println("go run . deploy <directory> <host-port> <app-port>")
+        os.Exit(1)
+    }
+
     ctx := context.Background()
 
     // Connect to Docker Engine.
@@ -290,46 +296,15 @@ func main() {
     }
     defer dockerClient.Close()
 
-    // Package our example application's source files.
-    appPath := "./examples/hello-web"
-
-    buildContext, err := createBuildContext(appPath)
-    if err != nil {
-        log.Fatal("Build context error: ", err)
-    }
-
-    fmt.Println("Build context prepared.")
-
-    // Request Docker to build the image.
-    imageName := "launchpad-hello:v1"
-
-    result, err := dockerClient.ImageBuild(
+    err = deployApplication(
         ctx,
-        buildContext,
-        client.ImageBuildOptions{
-            Tags: []string{imageName},
-        },
+        dockerClient,
+        os.Args[2],
+        os.Args[3],
+        os.Args[4],
     )
+
     if err != nil {
-        log.Fatal("Build request failed: ", err)
+        log.Fatal("Deployment failed: ", err)
     }
-    defer result.Body.Close()
-
-    // Read build progress and detect failures.
-    if err := readBuildOutput(result.Body); err != nil {
-        log.Fatal(err)
-    }
-
-    // Verify that Docker has the expected image.
-    _, err = dockerClient.ImageInspect(
-        ctx,
-        imageName,
-    )
-    if err != nil {
-        log.Fatal("Image verification failed: ", err)
-    }
-
-    fmt.Println()
-    fmt.Println("Image built successfully!")
-    fmt.Println("Image:", imageName)
 }
