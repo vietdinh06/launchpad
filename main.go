@@ -153,6 +153,131 @@ func validatePort(value string) error {
 	return nil
 }
 
+func deployApplication(
+    ctx context.Context,
+    dockerClient *client.Client,
+    appPath string,
+    hostPort string,
+    appPort string,
+) error {
+ 	fmt.Println("[1/5] Validating application...")
+
+   	if err := validatePort(hostPort); err != nil {
+        return err
+    }
+    if err := validatePort(appPort); err != nil {
+        return err
+    }
+
+	absPath, err := filepath.Abs(appPath)
+	if err != nil {
+		return err
+	}
+
+	info, err := os.Stat(absPath)
+	if err != nil {
+		return err
+	}
+
+    if !info.IsDir() {
+        return fmt.Errorf("application path is not a directory")
+    }
+
+	dockerfile := filepath.Join(absPath, "Dockerfile")
+    if _, err := os.Stat(dockerfile); err != nil {
+        return fmt.Errorf("Dockerfile not found: %w", err)
+    }
+
+	fmt.Println("[2/5] Preparing build context...")
+
+    buildContext, err := createBuildContext(absPath)
+    if err != nil {
+        return fmt.Errorf("prepare context: %w", err)
+    }
+
+	 // A unique identifier avoids reusing an existing container name.
+    deploymentID := strconv.FormatInt(time.Now().UnixNano(), 10)
+    imageName := "launchpad-app:" + deploymentID
+    containerName := "launchpad-" + deploymentID
+
+	fmt.Println("[3/5] Building Docker image...")
+
+	buildResult, err := dockerClient.ImageBuild(
+		ctx,
+		buildContext,
+		client.ImageBuildOptions{
+			Tags: []string{imageName},
+		},
+	)
+    if err != nil {
+        log.Fatal("Build request failed: ", err)
+    }
+    defer buildResult.Body.Close()
+
+    if err := readBuildOutput(buildResult.Body); err != nil {
+        log.Fatal(err)
+    }
+
+    // Check that the expected image was produced.
+    if _, err := dockerClient.ImageInspect(ctx, imageName); err != nil {
+        return fmt.Errorf("image verification failed: %w", err)
+    }
+
+    fmt.Println("[4/5] Creating container...")
+
+    port := network.MustParsePort(appPort + "/tcp")
+
+	created, err := dockerClient.ContainerCreate(
+		ctx,
+		client.ContainerCreateOptions{
+			Name: containerName,
+
+			Config: &container.Config{
+                Image: imageName,
+                ExposedPorts: network.PortSet{
+                    port: struct{}{},
+                },
+            },
+
+			HostConfig: &container.HostConfig{
+				PortBindings: network.PortMap{
+                    port: []network.PortBinding{
+                        {
+                            HostIP: netip.MustParseAddr("127.0.0.1"),
+                            HostPort: hostPort,
+                        },
+                    },
+                },
+			},
+		},
+	)
+    if err != nil {
+        return fmt.Errorf("create container: %w", err)
+    }
+
+	fmt.Println("[5/5] Starting application...")
+
+    _, err = dockerClient.ContainerStart(
+        ctx,
+        created.ID,
+        client.ContainerStartOptions{},
+    )
+	
+	if err != nil {
+        return fmt.Errorf("start container: %w", err)
+    }
+
+    fmt.Println()
+    fmt.Println("Deployment created!")
+    fmt.Println("Deployment ID:", deploymentID)
+    fmt.Println("Container:", containerName)
+    fmt.Println("Image:", imageName)
+    fmt.Println("Application URL: http://localhost:" + hostPort)
+    fmt.Println("Note: HTTP readiness has not yet been verified.")
+
+    return nil
+}
+
 func main() {
     fmt.Println("Launchpad Image Builder")
 
