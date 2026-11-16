@@ -4,10 +4,13 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"log"
-
+	"net/netip"
 	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/network"
 	"github.com/moby/moby/client"
+	"github.com/moby/moby/api/pkg/stdcopy"
 )
 
 func main() {
@@ -73,11 +76,30 @@ func main() {
 		}
 	}
 
+	containerPort := network.MustParsePort("80/tcp")
+
 	resp, err := dockerClient.ContainerCreate(
 		ctx,
 		client.ContainerCreateOptions{
-			Image: imageName,
-			Name:  containerName,
+			Name: "launchpad-nginx",
+
+			Config: &container.Config{
+				Image: imageName,
+				ExposedPorts: network.PortSet{
+					containerPort: struct{}{},
+				},
+			},
+
+			HostConfig: &container.HostConfig{
+				PortBindings: network.PortMap{
+					containerPort: []network.PortBinding{
+						{
+							HostIP:   netip.MustParseAddr("127.0.0.1"),
+							HostPort: "8080",
+						},
+					},
+				},
+			},
 		},
 	)
 	if err != nil {
@@ -94,6 +116,51 @@ func main() {
 		log.Fatal("Failed to start container: ", err)
 	}
 	fmt.Printf("Container started: %s\n", resp.ID)
+
+	inspect, err := dockerClient.ContainerInspect(
+		ctx,
+		resp.ID,
+		client.ContainerInspectOptions{},
+	)
+
+	if err != nil {
+		log.Fatal("Failed to inspect container: ", err)
+	}
+	fmt.Printf("Container inspect: %v\n", inspect)
+
+	fmt.Println("Container Information:")
+	fmt.Println("ID:", inspect.Container.ID )
+	fmt.Println("Name:", inspect.Container.Name)
+	fmt.Println("Running:", inspect.Container.State.Running)
+	fmt.Println("Status:", inspect.Container.State.Status)
+
+	logs, err := dockerClient.ContainerLogs(
+		ctx,
+		resp.ID,
+		client.ContainerLogsOptions{
+			ShowStdout: true,
+			ShowStderr: true,
+			Tail: "15",
+		},
+	)
+
+	if err != nil {
+		log.Fatal("Failed to retrieve logs", err)
+	}
+	defer logs.Close()
+
+	fmt.Println("Container logs:")
+
+	_, err = stdcopy.StdCopy(
+		os.Stdout,
+		os.Stderr,
+		logs,
+	)
+
+	if err != nil {
+		log.Fatal("Failed to retrieve logs", err)
+	}
+
 }
 
 func findContainerID(containers []container.Summary, name string) string {
