@@ -1,175 +1,143 @@
+
 package main
 
 import (
-	"context"
-	"fmt"
-	"io"
-	"os"
-	"log"
-	"net/netip"
-	"github.com/moby/moby/api/types/container"
-	"github.com/moby/moby/api/types/network"
-	"github.com/moby/moby/client"
-	"github.com/moby/moby/api/pkg/stdcopy"
+    "archive/tar"
+    "bytes"
+    "context"
+    "encoding/json"
+    "fmt"
+    "io"
+    "log"
+    "os"
+    "path/filepath"
+
+    "github.com/moby/moby/client"
 )
 
-func main() {
-	fmt.Println("Starting Launchpad...")
+// createBuildContext packages the two files in our
+// example application into an in-memory tar archive.
+func createBuildContext(appPath string) (*bytes.Buffer, error) {
+    var buffer bytes.Buffer
+    tarWriter := tar.NewWriter(&buffer)
 
-	// Create a context for our Docker operations.
-	ctx := context.Background()
+    files := []string{"Dockerfile", "index.html"}
 
-	// Create a client to communicate with Docker Engine.
-	dockerClient, err := client.New(client.FromEnv)
-	if err != nil {
-		log.Fatal("Failed to create Docker client: ", err)
-	}
-	defer dockerClient.Close()
+    for _, name := range files {
+        path := filepath.Join(appPath, name)
 
-	// Ask Docker for its running containers.
-	result, err := dockerClient.ContainerList(
-		ctx,
-		client.ContainerListOptions{All: true},
-	)
-	if err != nil {
-		log.Fatal("Failed to list containers: ", err)
-	}
+        data, err := os.ReadFile(path)
+        if err != nil {
+            return nil, fmt.Errorf("read %s: %w", name, err)
+        }
 
-	fmt.Println("Connected to Docker!")
-	fmt.Println("Running containers:")
+        header := &tar.Header{
+            Name: name,
+            Mode: 0644,
+            Size: int64(len(data)),
+        }
 
-	for _, container := range result.Items {
-		fmt.Printf("ID: %s | Image: %s\n",
-			container.ID[:12],
-			container.Image,
-		)
-	}
+        if err := tarWriter.WriteHeader(header); err != nil {
+            return nil, err
+        }
 
-	imageName := "docker.io/library/nginx:latest"
+        if _, err := tarWriter.Write(data); err != nil {
+            return nil, err
+        }
+    }
 
-	reader, err := dockerClient.ImagePull(
-		ctx,
-		imageName,
-		client.ImagePullOptions{},
-	)
-	if err != nil {
-		log.Fatal("Failed to pull image: ", err)
-	}
-	defer reader.Close()
+    if err := tarWriter.Close(); err != nil {
+        return nil, err
+    }
 
-	// Consume the response stream to finish the pull.
-	if _, err := io.Copy(io.Discard, reader); err != nil {
-		log.Fatal("Failed to complete image pull: ", err)
-	}
-
-	containerName := "launchpad-nginx"
-	if containerID := findContainerID(result.Items, containerName); containerID != "" {
-		_, err := dockerClient.ContainerRemove(
-			ctx,
-			containerID,
-			client.ContainerRemoveOptions{
-				Force: true,
-			},
-		)
-		if err != nil {
-			log.Fatal("Failed to remove existing container: ", err)
-		}
-	}
-
-	containerPort := network.MustParsePort("80/tcp")
-
-	resp, err := dockerClient.ContainerCreate(
-		ctx,
-		client.ContainerCreateOptions{
-			Name: "launchpad-nginx",
-
-			Config: &container.Config{
-				Image: imageName,
-				ExposedPorts: network.PortSet{
-					containerPort: struct{}{},
-				},
-			},
-
-			HostConfig: &container.HostConfig{
-				PortBindings: network.PortMap{
-					containerPort: []network.PortBinding{
-						{
-							HostIP:   netip.MustParseAddr("127.0.0.1"),
-							HostPort: "8080",
-						},
-					},
-				},
-			},
-		},
-	)
-	if err != nil {
-		log.Fatal("Failed to create container: ", err)
-	}
-
-	_, err = dockerClient.ContainerStart(
-		ctx,
-		resp.ID,
-		client.ContainerStartOptions{},
-	)
-
-	if err != nil {
-		log.Fatal("Failed to start container: ", err)
-	}
-	fmt.Printf("Container started: %s\n", resp.ID)
-
-	inspect, err := dockerClient.ContainerInspect(
-		ctx,
-		resp.ID,
-		client.ContainerInspectOptions{},
-	)
-
-	if err != nil {
-		log.Fatal("Failed to inspect container: ", err)
-	}
-	fmt.Printf("Container inspect: %v\n", inspect)
-
-	fmt.Println("Container Information:")
-	fmt.Println("ID:", inspect.Container.ID )
-	fmt.Println("Name:", inspect.Container.Name)
-	fmt.Println("Running:", inspect.Container.State.Running)
-	fmt.Println("Status:", inspect.Container.State.Status)
-
-	logs, err := dockerClient.ContainerLogs(
-		ctx,
-		resp.ID,
-		client.ContainerLogsOptions{
-			ShowStdout: true,
-			ShowStderr: true,
-			Tail: "15",
-		},
-	)
-
-	if err != nil {
-		log.Fatal("Failed to retrieve logs", err)
-	}
-	defer logs.Close()
-
-	fmt.Println("Container logs:")
-
-	_, err = stdcopy.StdCopy(
-		os.Stdout,
-		os.Stderr,
-		logs,
-	)
-
-	if err != nil {
-		log.Fatal("Failed to retrieve logs", err)
-	}
-
+    return &buffer, nil
 }
 
-func findContainerID(containers []container.Summary, name string) string {
-	for _, container := range containers {
-		for _, containerName := range container.Names {
-			if containerName == "/"+name || containerName == name {
-				return container.ID
-			}
-		}
-	}
-	return ""
+// readBuildOutput consumes Docker's build-event stream.
+// It prints progress and returns any build error.
+func readBuildOutput(reader io.Reader) error {
+    decoder := json.NewDecoder(reader)
+
+    var event struct {
+        Stream string `json:"stream"`
+        Error  string `json:"error"`
+    }
+
+    for {
+        event = struct {
+            Stream string `json:"stream"`
+            Error  string `json:"error"`
+        }{}
+
+        if err := decoder.Decode(&event); err != nil {
+            if err == io.EOF {
+                return nil
+            }
+            return fmt.Errorf("read build output: %w", err)
+        }
+
+        if event.Error != "" {
+            return fmt.Errorf("Docker build failed: %s", event.Error)
+        }
+
+        if event.Stream != "" {
+            fmt.Print(event.Stream)
+        }
+    }
+}
+
+func main() {
+    fmt.Println("Launchpad Image Builder")
+
+    ctx := context.Background()
+
+    // Connect to Docker Engine.
+    dockerClient, err := client.New(client.FromEnv)
+    if err != nil {
+        log.Fatal("Docker client error: ", err)
+    }
+    defer dockerClient.Close()
+
+    // Package our example application's source files.
+    appPath := "./examples/hello-web"
+
+    buildContext, err := createBuildContext(appPath)
+    if err != nil {
+        log.Fatal("Build context error: ", err)
+    }
+
+    fmt.Println("Build context prepared.")
+
+    // Request Docker to build the image.
+    imageName := "launchpad-hello:v1"
+
+    result, err := dockerClient.ImageBuild(
+        ctx,
+        buildContext,
+        client.ImageBuildOptions{
+            Tags: []string{imageName},
+        },
+    )
+    if err != nil {
+        log.Fatal("Build request failed: ", err)
+    }
+    defer result.Body.Close()
+
+    // Read build progress and detect failures.
+    if err := readBuildOutput(result.Body); err != nil {
+        log.Fatal(err)
+    }
+
+    // Verify that Docker has the expected image.
+    _, err = dockerClient.ImageInspect(
+        ctx,
+        imageName,
+    )
+    if err != nil {
+        log.Fatal("Image verification failed: ", err)
+    }
+
+    fmt.Println()
+    fmt.Println("Image built successfully!")
+    fmt.Println("Image:", imageName)
 }
