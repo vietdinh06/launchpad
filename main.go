@@ -9,48 +9,111 @@ import (
     "fmt"
     "io"
     "log"
+    "net/netip"
     "os"
     "path/filepath"
+    "strconv"
+    "strings"
+    "time"
 
+    "github.com/moby/moby/api/types/container"
+    "github.com/moby/moby/api/types/network"
     "github.com/moby/moby/client"
 )
+
+const maxContextSize = 25 << 20 // 25 MiB
 
 // createBuildContext packages the two files in our
 // example application into an in-memory tar archive.
 func createBuildContext(appPath string) (*bytes.Buffer, error) {
     var buffer bytes.Buffer
     tarWriter := tar.NewWriter(&buffer)
+	var totalSize int64
 
-    files := []string{"Dockerfile", "index.html"}
+	err := filepath.WalkDir(appPath,
+		func(path string, entry os.DirEntry, walkErr error) error {
+			if walkErr != nil {
+                return walkErr
+            }
 
-    for _, name := range files {
-        path := filepath.Join(appPath, name)
+			if entry.Name() == ".git" && entry.IsDir() {
+				return filepath.SkipDir
+			}
 
-        data, err := os.ReadFile(path)
-        if err != nil {
-            return nil, fmt.Errorf("read %s: %w", name, err)
-        }
+			if entry.Name() == ".env" {
+                return nil
+            }
 
-        header := &tar.Header{
-            Name: name,
-            Mode: 0644,
-            Size: int64(len(data)),
-        }
+			rel, err := filepath.Rel(appPath, path)
 
-        if err := tarWriter.WriteHeader(header); err != nil {
-            return nil, err
-        }
+			if err != nil {
+				return err
+			}
 
-        if _, err := tarWriter.Write(data); err != nil {
-            return nil, err
-        }
-    }
+			if rel == "." {
+				return nil
+			}
+
+			info, err := entry.Info()
+
+			if err != nil {
+				return err
+			}
+
+			if !info.Mode().IsRegular() && !info.IsDir() {
+                return fmt.Errorf("unsupported file: %s", rel)
+            }
+
+            if info.Mode().IsRegular() {
+                totalSize = info.Size()
+				if totalSize > maxContextSize {
+					return fmt.Errorf("build context exceeds 25 MiB")
+				}
+            }
+
+			header, err := tar.FileInfoHeader(info, "")
+
+			if err != nil {
+				return err
+			}
+
+			header.Name = filepath.ToSlash(rel)
+
+			if err := tarWriter.WriteHeader(header); err != nil {
+                return err
+            }
+
+            if info.IsDir() {
+                return nil
+            }
+
+            file, err := os.Open(path)
+
+			if err != nil {
+				return err
+			}
+
+            _, copyErr := io.Copy(tarWriter, file)
+			closeErr := file.Close()
+			if copyErr != nil {
+				return copyErr
+			}
+			return closeErr
+
+		},
+	)
+
+	if err != nil {
+		tarWriter.Close()
+		return nil, err
+	}
 
     if err := tarWriter.Close(); err != nil {
         return nil, err
     }
 
     return &buffer, nil
+    
 }
 
 // readBuildOutput consumes Docker's build-event stream.
@@ -58,32 +121,36 @@ func createBuildContext(appPath string) (*bytes.Buffer, error) {
 func readBuildOutput(reader io.Reader) error {
     decoder := json.NewDecoder(reader)
 
-    var event struct {
-        Stream string `json:"stream"`
-        Error  string `json:"error"`
-    }
-
     for {
-        event = struct {
+        var event struct {
             Stream string `json:"stream"`
             Error  string `json:"error"`
-        }{}
+        }
 
-        if err := decoder.Decode(&event); err != nil {
-            if err == io.EOF {
-                return nil
-            }
-            return fmt.Errorf("read build output: %w", err)
+        err := decoder.Decode(&event)
+        if err == io.EOF {
+            return nil
+        }
+        if err != nil {
+            return err
         }
 
         if event.Error != "" {
-            return fmt.Errorf("Docker build failed: %s", event.Error)
+            return fmt.Errorf("Docker build: %s", event.Error)
         }
 
         if event.Stream != "" {
             fmt.Print(event.Stream)
         }
     }
+}
+
+func validatePort(value string) error {
+    port, err := strconv.Atoi(value)
+	if err != nil || port < 0 || port > 65536 {
+        return fmt.Errorf("invalid port: %s", value)
+	}
+	return nil
 }
 
 func main() {
