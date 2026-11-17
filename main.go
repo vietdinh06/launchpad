@@ -15,7 +15,7 @@ import (
     "strconv"
     "strings"
     "time"
-
+	"github.com/moby/moby/api/pkg/stdcopy"
     "github.com/moby/moby/api/types/container"
     "github.com/moby/moby/api/types/network"
     "github.com/moby/moby/client"
@@ -386,6 +386,51 @@ func deploymentStatus(ctx context.Context, dockerClient *client.Client, deployme
     fmt.Println("Exit code:", c.State.ExitCode)
 
 	return nil
+}
+
+func deploymentLogs(ctx context.Context, dockerClient *client.Client, deploymentID string) error {
+	containerID, err := findDeployment(ctx, dockerClient, deploymentID)
+
+	if err != nil {
+		return err
+	}
+
+	result, err := dockerClient.ContainerInspect(
+		ctx,
+		containerID,
+		client.ContainerInspectOptions{},
+	)	
+
+	logs, err := dockerClient.ContainerLogs(
+		ctx,
+		containerID,
+		client.ContainerLogsOptions{
+            ShowStdout: true,
+            ShowStderr: true,
+            Tail:       "100",
+            Timestamps: true,
+		},
+	)
+	if err != nil {
+		return fmt.Errorf("retrieve logs: %w", err)
+	}
+	defer logs.Close()
+
+	if result.Container.Config.Tty {
+        _, err = io.Copy(os.Stdout, logs)
+    } else {
+        _, err = stdcopy.StdCopy(
+            os.Stdout,
+            os.Stderr,
+            logs,
+        )
+    }
+
+    if err != nil {
+        return fmt.Errorf("read logs: %w", err)
+    }
+
+    return nil
 }
 
 func main() {
