@@ -343,7 +343,7 @@ func findDeployment(ctx context.Context, dockerClient *client.Client, deployment
     if err != nil {
         return "", fmt.Errorf("find deployment: %w", err)
     }
-	
+
 	for _, c := range list.Items {
 			if c.Labels["launchpad.deployment.id"] == deploymentID {
 				return c.ID, nil
@@ -355,6 +355,37 @@ func findDeployment(ctx context.Context, dockerClient *client.Client, deployment
 			deploymentID,
 		)
 
+}
+
+func deploymentStatus(ctx context.Context, dockerClient *client.Client, deploymentID string) error {
+	containerID, err := findDeployment(ctx, dockerClient, deploymentID)
+
+	if err != nil {
+		return err
+	}
+
+	status, err := dockerClient.ContainerInspect(
+		ctx,
+		containerID,
+		client.ContainerInspectOptions{},
+	)	
+
+ 	if err != nil {
+        return fmt.Errorf("inspect deployment: %w", err)
+    }
+
+    c := status.Container
+
+	fmt.Println("Deployment:", deploymentID)
+    fmt.Println("Application:",
+        c.Config.Labels["launchpad.application"])
+    fmt.Println("Container:", c.ID)
+    fmt.Println("Image:", c.Config.Image)
+    fmt.Println("Status:", c.State.Status)
+    fmt.Println("Running:", c.State.Running)
+    fmt.Println("Exit code:", c.State.ExitCode)
+
+	return nil
 }
 
 func main() {
