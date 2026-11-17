@@ -328,6 +328,35 @@ func listDeployments(ctx context.Context, dockerClient *client.Client) error {
     return nil
 }
 
+func findDeployment(ctx context.Context, dockerClient *client.Client, deploymentID string) (string, error){
+	filters := make(client.Filters).
+		Add("label", "launchpad.managed=true").
+		Add("label", "launchpad.deployment,id="+deploymentID)
+
+	list, err := dockerClient.ContainerList(
+		ctx,
+		client.ContainerListOptions{
+			All: true,
+			Filters: filters,
+		},
+	)
+    if err != nil {
+        return "", fmt.Errorf("find deployment: %w", err)
+    }
+	
+	for _, c := range list.Items {
+			if c.Labels["launchpad.deployment.id"] == deploymentID {
+				return c.ID, nil
+			}
+		}
+
+		return "", fmt.Errorf(
+			"deployment %q not found",
+			deploymentID,
+		)
+
+}
+
 func main() {
     fmt.Println("Launchpad Image Builder")
 
