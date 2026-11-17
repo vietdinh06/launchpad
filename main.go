@@ -237,6 +237,13 @@ func deployApplication(
                 ExposedPorts: network.PortSet{
                     port: struct{}{},
                 },
+
+				Labels: map[string]string{
+					"launchpad.managed":       "true",
+					"launchpad.deployment.id": deploymentID,
+					"launchpad.application":   filepath.Base(absPath),
+					"launchpad.host-port":     hostPort,
+				},
             },
 
 			HostConfig: &container.HostConfig{
@@ -274,6 +281,49 @@ func deployApplication(
     fmt.Println("Image:", imageName)
     fmt.Println("Application URL: http://localhost:" + hostPort)
     fmt.Println("Note: HTTP readiness has not yet been verified.")
+
+    return nil
+}
+
+func listDeployments(ctx context.Context, dockerClient *client.Client) error {
+	filters := make(client.Filters).Add(
+		"label",
+		"launchpad.managed=true",
+	)
+
+	list, err := dockerClient.ContainerList(
+		ctx,
+		client.ContainerListOptions{
+			All: true,
+			Filters: filters,
+		},
+	)
+	if err != nil {
+        return fmt.Errorf("list deployments: %w", err)
+	}
+
+	if len(list.Items) == 0 {
+		fmt.Println("No Launchpad deployments found.")
+        return nil
+	}
+
+	fmt.Printf(
+        "%-22s %-20s %-12s %-8s\n",
+        "DEPLOYMENT",
+        "APPLICATION",
+        "STATE",
+        "PORT",
+    )
+
+	for _, c := range list.Items {
+        fmt.Printf(
+            "%-22s %-20s %-12s %-8s\n",
+            c.Labels["launchpad.deployment.id"],
+            c.Labels["launchpad.application"],
+            c.State,
+            c.Labels["launchpad.host-port"],
+        )
+    }
 
     return nil
 }
