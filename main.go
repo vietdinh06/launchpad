@@ -433,6 +433,29 @@ func deploymentLogs(ctx context.Context, dockerClient *client.Client, deployment
     return nil
 }
 
+func stopDeployment(ctx context.Context, dockerClient *client.Client, deploymentID string) error {
+	containerID, err := findDeployment(ctx, dockerClient, deploymentID)
+
+	if err != nil {
+		return err
+	}
+
+	_, err = dockerClient.ContainerStop(
+		ctx,
+		containerID,
+		client.ContainerStopOptions{},
+	)
+
+	if err != nil {
+		return fmt.Errorf("stop deployment: %w", err)
+    }
+
+    fmt.Println("Deployment stopped:", deploymentID)
+
+    return nil
+
+}
+
 func main() {
     fmt.Println("Launchpad Image Builder")
 
