@@ -1,20 +1,20 @@
 package main
 
 import (
-    "context"
-    "encoding/json"
-    "errors"
-    "fmt"
-    "io"
-    "log"
-    "net/http"
-    "os"
-    "strings"
-    "time"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"log"
+	"net/http"
+	"os"
+	"strings"
+	"time"
 
-    "github.com/google/uuid"
-    "github.com/jackc/pgx/v5/pgconn"
-    "github.com/jackc/pgx/v5/pgxpool"
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type Application struct {
@@ -49,7 +49,7 @@ func main() {
 		log.Fatalf("Unable to ping database: %v\n", err)
 	}
 
-	server := &Server{db: db}
+	server := &Server{db: pool}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", server.health)
@@ -143,4 +143,64 @@ func (s *Server) createApplication(r *http.Request, w http.ResponseWriter) {
 
 	w.Header().set("Location", "/applications/"+app.ID)
 	writeJSON(w, http.StatusCreated, app)
+}
+
+func (s *Server) listApplications(r *http.Request, w http.ResponseWriter) {
+	ctx, cancel := context.WithTimeout(
+        r.Context(), 5*time.Second,
+    )
+    defer cancel()
+
+	rows, err := s.db.Query(ctx,
+	`SELECT id, name, created_at
+	FROM applications
+	ORDER BY created_at AESC, id DESC`)
+
+	if err != nil {
+        log.Printf("query applications: %v", err)
+        http.Error(w, "database error",
+            http.StatusInternalServerError)
+        return	
+	}
+
+	defer rows.Close()
+
+	apps := []Application{}
+
+	for rows.Next() {
+		var app Application
+
+        if err := rows.Scan(
+            &app.ID, &app.Name, &app.CreatedAt,
+        ); err != nil {
+            log.Printf("scan application: %v", err)
+            http.Error(w, "database error",
+                http.StatusInternalServerError)
+            return
+        }
+
+		apps = append(apps, app)
+	}
+
+    if err := rows.Err(); err != nil {
+        log.Printf("iterate applications: %v", err)
+        http.Error(w, "database error",
+            http.StatusInternalServerError)
+        return
+    }
+	
+	writeJSON(w, http.StatusOK, apps)
+
+}
+
+func writeJSON(w http.ResponseWriter, status int, value any) {
+	data, err := json.Marshal(value)
+    if err != nil {
+        http.Error(w, fmt.Sprintf("JSON encoding error: %v", err),
+            http.StatusInternalServerError)
+        return
+    }
+    w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+    _, _ = w.Write(append(data, '\n'))
 }
