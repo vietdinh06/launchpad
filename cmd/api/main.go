@@ -1,13 +1,20 @@
 package main
 
 import (
-	"context"
-	"log"
-	"net/http"
-	"os"
-	"time"
+    "context"
+    "encoding/json"
+    "errors"
+    "fmt"
+    "io"
+    "log"
+    "net/http"
+    "os"
+    "strings"
+    "time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
+    "github.com/google/uuid"
+    "github.com/jackc/pgx/v5/pgconn"
+    "github.com/jackc/pgx/v5/pgxpool"
 )
 
 type Application struct {
@@ -57,4 +64,83 @@ func main() {
 
 	log.Println("Launchpad API listening on :8081")
 	log.Fatal(httpServer.ListenAndServe())
+}
+
+func (s *Server) health(r *http.Request, w http.ResponseWriter) {
+	ctx, cancel := context.WithTimeout(
+		r.Context(), 3*time.Second,
+	)
+	defer cancel()
+
+	if err := s.db.Ping(ctx); err != nil {
+		http.Error(w, "database unavailable", http.StatusServiceUnavailable)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{
+		"status": "ok",
+	})
+}
+
+func (s *Server) createApplication(r *http.Request, w http.ResponseWriter) {
+	var request struct {
+        Name string `json:"name"`
+    }
+
+    r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+    decoder := json.NewDecoder(r.Body)
+    decoder.DisallowUnknownFields()
+
+	if err := decoder.Decode(&request); err != nil {
+		http.Error(w, "invalid JSON", http.StatusBadRequest)
+        return
+	}
+
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+        http.Error(w, "expected one JSON object", http.StatusBadRequest)
+        return
+    }
+
+	request.Name = strings.Trim(request.Name)
+
+	if request.Name == "" || len(request.Name) > 63 {
+		http.Error(w, "request length invalid", http.StatusBadRequest)
+	}
+
+	app := Application {
+		ID:   uuid.NewString(),
+		Name: request.Name,
+	}
+
+	ctx, cancel := context.WithTimeout(
+        r.Context(), 5*time.Second,
+    )
+    defer cancel()
+	err := s.db.QueryRow(
+        ctx,
+        `INSERT INTO applications (id, name)
+         VALUES ($1, $2)
+         RETURNING created_at`,
+        app.ID,
+        app.Name,
+    ).Scan(&app.CreatedAt)
+
+	if err != nil {
+		var pgErr *pgconn.PgError
+
+        if errors.As(err, &pgErr) &&
+            pgErr.Code == "23505" {
+            http.Error(w, "application already exists",
+                http.StatusConflict)
+            return
+        }
+
+        log.Printf("insert application: %v", err)
+        http.Error(w, "database error",
+            http.StatusInternalServerError)
+        return
+	}
+
+	w.Header().set("Location", "/applications/"+app.ID)
+	writeJSON(w, http.StatusCreated, app)
 }
