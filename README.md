@@ -1,1 +1,1 @@
-lightweight PAAS in go
+lightweight PaaS in go

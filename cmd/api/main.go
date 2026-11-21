@@ -55,6 +55,10 @@ func main() {
 	mux.HandleFunc("GET /health", server.health)
 	mux.HandleFunc("POST /applications", server.createApplication)
 	mux.HandleFunc("GET /applications", server.listApplications)
+	mux.HandleFunc("GET /applications/{$id}/releases", server.createRelease)
+	mux.HandleFunc("GET /applications/{id}/releases", server.listReleases)
+	mux.HandleFunc("GET /releases/{id}/deployments", server.createDeployments)
+	mux.HandleFunc("GET /deployments/{id}", server.getDeployments)
 
 	httpServer := &http.Server{
 		Addr:              "127.0.0.1:8081",

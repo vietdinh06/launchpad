@@ -1,4 +1,3 @@
-
 CREATE TABLE applications (
     id UUID PRIMARY KEY,
     name TEXT NOT NULL UNIQUE,
