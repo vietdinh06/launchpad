@@ -66,7 +66,7 @@ func main() {
 	log.Fatal(httpServer.ListenAndServe())
 }
 
-func (s *Server) health(r *http.Request, w http.ResponseWriter) {
+func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(
 		r.Context(), 3*time.Second,
 	)
@@ -82,85 +82,86 @@ func (s *Server) health(r *http.Request, w http.ResponseWriter) {
 	})
 }
 
-func (s *Server) createApplication(r *http.Request, w http.ResponseWriter) {
+func (s *Server) createApplication(w http.ResponseWriter, r *http.Request) {
 	var request struct {
-        Name string `json:"name"`
-    }
+		Name string `json:"name"`
+	}
 
-    r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
-    decoder := json.NewDecoder(r.Body)
-    decoder.DisallowUnknownFields()
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
 
 	if err := decoder.Decode(&request); err != nil {
 		http.Error(w, "invalid JSON", http.StatusBadRequest)
-        return
+		return
 	}
 
 	if err := decoder.Decode(&struct{}{}); err != io.EOF {
-        http.Error(w, "expected one JSON object", http.StatusBadRequest)
-        return
-    }
+		http.Error(w, "expected one JSON object", http.StatusBadRequest)
+		return
+	}
 
-	request.Name = strings.Trim(request.Name)
+	request.Name = strings.TrimSpace(request.Name)
 
 	if request.Name == "" || len(request.Name) > 63 {
 		http.Error(w, "request length invalid", http.StatusBadRequest)
+		return
 	}
 
-	app := Application {
+	app := Application{
 		ID:   uuid.NewString(),
 		Name: request.Name,
 	}
 
 	ctx, cancel := context.WithTimeout(
-        r.Context(), 5*time.Second,
-    )
-    defer cancel()
+		r.Context(), 5*time.Second,
+	)
+	defer cancel()
 	err := s.db.QueryRow(
-        ctx,
-        `INSERT INTO applications (id, name)
+		ctx,
+		`INSERT INTO applications (id, name)
          VALUES ($1, $2)
          RETURNING created_at`,
-        app.ID,
-        app.Name,
-    ).Scan(&app.CreatedAt)
+		app.ID,
+		app.Name,
+	).Scan(&app.CreatedAt)
 
 	if err != nil {
 		var pgErr *pgconn.PgError
 
-        if errors.As(err, &pgErr) &&
-            pgErr.Code == "23505" {
-            http.Error(w, "application already exists",
-                http.StatusConflict)
-            return
-        }
+		if errors.As(err, &pgErr) &&
+			pgErr.Code == "23505" {
+			http.Error(w, "application already exists",
+				http.StatusConflict)
+			return
+		}
 
-        log.Printf("insert application: %v", err)
-        http.Error(w, "database error",
-            http.StatusInternalServerError)
-        return
+		log.Printf("insert application: %v", err)
+		http.Error(w, "database error",
+			http.StatusInternalServerError)
+		return
 	}
 
-	w.Header().set("Location", "/applications/"+app.ID)
+	w.Header().Set("Location", "/applications/"+app.ID)
 	writeJSON(w, http.StatusCreated, app)
 }
 
-func (s *Server) listApplications(r *http.Request, w http.ResponseWriter) {
+func (s *Server) listApplications(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(
-        r.Context(), 5*time.Second,
-    )
-    defer cancel()
+		r.Context(), 5*time.Second,
+	)
+	defer cancel()
 
 	rows, err := s.db.Query(ctx,
-	`SELECT id, name, created_at
+		`SELECT id, name, created_at
 	FROM applications
-	ORDER BY created_at AESC, id DESC`)
+	ORDER BY created_at ASC, id DESC`)
 
 	if err != nil {
-        log.Printf("query applications: %v", err)
-        http.Error(w, "database error",
-            http.StatusInternalServerError)
-        return	
+		log.Printf("query applications: %v", err)
+		http.Error(w, "database error",
+			http.StatusInternalServerError)
+		return
 	}
 
 	defer rows.Close()
@@ -170,37 +171,37 @@ func (s *Server) listApplications(r *http.Request, w http.ResponseWriter) {
 	for rows.Next() {
 		var app Application
 
-        if err := rows.Scan(
-            &app.ID, &app.Name, &app.CreatedAt,
-        ); err != nil {
-            log.Printf("scan application: %v", err)
-            http.Error(w, "database error",
-                http.StatusInternalServerError)
-            return
-        }
+		if err := rows.Scan(
+			&app.ID, &app.Name, &app.CreatedAt,
+		); err != nil {
+			log.Printf("scan application: %v", err)
+			http.Error(w, "database error",
+				http.StatusInternalServerError)
+			return
+		}
 
 		apps = append(apps, app)
 	}
 
-    if err := rows.Err(); err != nil {
-        log.Printf("iterate applications: %v", err)
-        http.Error(w, "database error",
-            http.StatusInternalServerError)
-        return
-    }
-	
+	if err := rows.Err(); err != nil {
+		log.Printf("iterate applications: %v", err)
+		http.Error(w, "database error",
+			http.StatusInternalServerError)
+		return
+	}
+
 	writeJSON(w, http.StatusOK, apps)
 
 }
 
 func writeJSON(w http.ResponseWriter, status int, value any) {
 	data, err := json.Marshal(value)
-    if err != nil {
-        http.Error(w, fmt.Sprintf("JSON encoding error: %v", err),
-            http.StatusInternalServerError)
-        return
-    }
-    w.Header().Set("Content-Type", "application/json")
+	if err != nil {
+		http.Error(w, fmt.Sprintf("JSON encoding error: %v", err),
+			http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-    _, _ = w.Write(append(data, '\n'))
+	_, _ = w.Write(append(data, '\n'))
 }
