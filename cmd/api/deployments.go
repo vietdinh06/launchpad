@@ -23,6 +23,51 @@ type DeploymentJob struct {
 }
 
 func (s *Server) createDeployments(w http.ResponseWriter, r *http.Request) {
+	releaseID := r.PathValue("id")
 
-	// writeJSON(w, http.StatusCreated, deployment)
+    if _, err := uuid.Parse(releaseID); err != nil {
+        http.Error(w, "invalid release ID",
+            http.StatusBadRequest)
+        return
+    }
+
+    ctx, cancel := context.WithTimeout(
+        r.Context(), 5*time.Second,
+    )
+    defer cancel()
+
+	job := DeploymentJob{
+		ID: uuid.NewString(),
+		ReleaseID: releaseID,
+	}
+
+	err := s.db.QueryRow(
+		ctx,
+		`
+		INSERT into deployment_jobs (id, release_id)
+		SELECT $1, id
+		FROM releases
+		WHERE id = $2
+		RETURNING status, created_at, updated_at`,
+		job.ID, releaseID,
+	).Scan(
+        &job.Status,
+        &job.CreatedAt,
+        &job.UpdatedAt,
+    )
+
+	if errors.Is(err, pgx.ErrNoRows) {
+        http.Error(w, "release not found",
+            http.StatusNotFound)
+        return
+    }
+    if err != nil {
+        log.Printf("create deployment: %v", err)
+        http.Error(w, "database error",
+            http.StatusInternalServerError)
+        return
+    }
+
+	w.Header().Set("Location", "/deployments/"+job.ID)
+	writeJSON(w, http.StatusCreated, job)
 }
