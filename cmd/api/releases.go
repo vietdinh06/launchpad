@@ -1,0 +1,144 @@
+package main
+
+import (
+    "context"
+    "encoding/json"
+    "errors"
+    "io"
+    "log"
+    "net/http"
+    "strings"
+    "time"
+
+    "github.com/google/uuid"
+    "github.com/jackc/pgx/v5"
+)
+
+type Release struct {
+	ID            string    `json:"id"`
+    ApplicationID string    `json:"application_id"`
+    Version       int       `json:"version"`
+    ImageRef      string    `json:"image_ref"`
+    CreatedAt     time.Time `json:"created_at"`
+}
+
+func (s *Server) createRelease(w http.ResponseWriter, r *http.Request) {
+	appID := r.PathValue("id")
+
+	if _, err := uuid.Parse(appID); err != nil {
+		http.Error(w, "invalid application ID",
+			http.StatusBadRequest)
+		return
+	}
+
+	var req struct {
+        ImageRef string `json:"image_ref"`
+    }
+
+    r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+    decoder := json.NewDecoder(r.Body)
+    decoder.DisallowUnknownFields()
+
+    if err := decoder.Decode(&req); err != nil {
+        http.Error(w, "invalid JSON",
+            http.StatusBadRequest)
+        return
+    }
+
+    if err := decoder.Decode(&struct{}{}); err != io.EOF {
+        http.Error(w, "expected one JSON object",
+            http.StatusBadRequest)
+        return
+    }
+
+    req.ImageRef = strings.TrimSpace(req.ImageRef)
+    if req.ImageRef == "" || len(req.ImageRef) > 512 {
+        http.Error(w, "invalid image reference",
+            http.StatusBadRequest)
+        return
+    }
+
+    ctx, cancel := context.WithTimeout(
+        r.Context(), 10*time.Second,
+    )
+    defer cancel()
+
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		http.Error(w, "database error", http.StatusInternalServerError)
+	}
+    defer tx.Rollback(context.Background())
+
+    var lockedID string
+    err = tx.QueryRow(ctx,
+        `SELECT id
+         FROM applications
+         WHERE id = $1
+         FOR UPDATE`,
+        appID,
+    ).Scan(&lockedID)
+
+    if errors.Is(err, pgx.ErrNoRows) {
+        http.Error(w, "application not found",
+            http.StatusNotFound)
+        return
+    }
+
+    if err != nil {
+        log.Printf("lock application: %v", err)
+        http.Error(w, "database error",
+            http.StatusInternalServerError)
+        return
+	}
+
+	var nextVersion int
+
+	err = tx.QueryRow(ctx,
+		`SELECT COALESCE(MAX(version), 0) + 1
+         FROM releases
+         WHERE application_id = $1`,
+        appID,
+    ).Scan(&nextVersion)
+
+	if err != nil {
+		log.Printf("calculate version: %v", err)
+		http.Error(w, "database error",
+            http.StatusInternalServerError)
+        return
+	}
+
+	release := Release{
+		ID: uuid.NewString(),
+		ApplicationID: appID,
+		Version: nextVersion,
+		ImageRef: req.ImageRef,
+	}
+
+	err = tx.QueryRow(
+		ctx,
+		`INSERT INTO release (id, appid, version, imageref)
+         VALUES ($1, $2, $3, $4)
+         RETURNING created_at`,
+		release.ID,
+		release.ApplicationID,
+		release.Version,
+		release.ImageRef,
+	).Scan(&release.CreatedAt)
+
+	if err != nil {
+        log.Printf("create release: %v", err)
+        http.Error(w, "database error",
+            http.StatusInternalServerError)
+        return
+    }
+
+    if err := tx.Commit(ctx); err != nil {
+        log.Printf("commit release: %v", err)
+        http.Error(w, "database error",
+            http.StatusInternalServerError)
+        return
+    }
+
+    writeJSON(w, http.StatusCreated, release)
+
+}
