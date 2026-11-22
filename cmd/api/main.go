@@ -35,7 +35,7 @@ func main() {
 
 	ctx, cancel := context.WithTimeout(
 		context.Background(),
-		5*5*time.Second,
+		5*time.Second,
 	)
 	defer cancel()
 
@@ -55,9 +55,10 @@ func main() {
 	mux.HandleFunc("GET /health", server.health)
 	mux.HandleFunc("POST /applications", server.createApplication)
 	mux.HandleFunc("GET /applications", server.listApplications)
-	mux.HandleFunc("GET /applications/{$id}/releases", server.createRelease)
+	mux.HandleFunc("GET /applications/{id}", server.getApplication)
+	mux.HandleFunc("POST /applications/{id}/releases", server.createRelease)
 	mux.HandleFunc("GET /applications/{id}/releases", server.listReleases)
-	mux.HandleFunc("GET /releases/{id}/deployments", server.createDeployments)
+	mux.HandleFunc("POST /releases/{id}/deployments", server.createDeployments)
 	mux.HandleFunc("GET /deployments/{id}", server.getDeployments)
 
 	httpServer := &http.Server{
