@@ -140,5 +140,83 @@ func (s *Server) createRelease(w http.ResponseWriter, r *http.Request) {
     }
 
     writeJSON(w, http.StatusCreated, release)
+}
 
+func (s *Server) listReleases(w http.ResponseWriter, r *http.Request) {
+    appID := r.PathValue("id")
+
+    if _, err := uuid.Parse(appID); err != nil {
+        http.Error(w, "invalid application ID",
+            http.StatusBadRequest)
+        return
+    }
+
+    ctx, cancel := context.WithTimeout(
+        r.Context(), 5*time.Second,
+    )
+    defer cancel()
+
+	var exists bool
+
+	err := s.db.QueryRow(
+		ctx,
+		`SELECT EXISTS(
+            SELECT 1 FROM applications WHERE id = $1
+        )`,
+        appID,
+    ).Scan(&exists)
+
+	if err != nil {
+        http.Error(w, "database error", http.StatusInternalServerError)
+        return
+	}
+
+	if !exists {
+		http.Error(w, "application not found", http.StatusNotFound)
+		return
+	}
+
+	rows, err := s.db.Query(
+		ctx,
+		`
+		SELECT id, application_id, version, image_ref, created_at
+		FROM releases
+		WHERE application_id = $1
+		ORDER BY version DESC
+		`,
+		appID,
+	)
+	if err != nil {
+        http.Error(w, "database error", http.StatusInternalServerError)
+        return
+	}
+
+	releases := []Release{}
+
+    for rows.Next() {
+		var release Release
+
+		if err := rows.Scan(
+            &release.ID,
+            &release.ApplicationID,
+            &release.Version,
+            &release.ImageRef,
+            &release.CreatedAt,
+        ); err != nil {
+            http.Error(w, "database error",
+                http.StatusInternalServerError)
+            return
+        }
+
+		releases = append(releases, release)
+	}
+
+	if err := rows.Err(); err != nil {
+		log.Printf("iterate applications: %v", err)
+		http.Error(w, "database error",
+			http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, releases)
 }
