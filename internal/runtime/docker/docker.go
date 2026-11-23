@@ -17,3 +17,116 @@ import (
     "launchpad/internal/runtime"
 )
 
+type DockerRuntime struct {
+	client *client.Client
+}
+
+var _ runtime.Runtime = (*DockerRuntime)(nil)
+
+func New(c *client.Client) *DockerRuntime {
+	return &DockerRuntime{
+		client: c,
+	}
+}
+
+func (d *DockerRuntime) Deploy (ctx context.Context, req runtime.DeployRequest) (runtime.Instance, error) {
+	if strings.TrimSpace(req.ImageRef) == "" {
+		return runtime.Instance{}, fmt.Errorf("Image reference is required.")
+	}
+
+	if req.JobID == "" {
+		return runtime.Instance{}, fmt.Errorf("Job ID is required.")
+	}
+
+	if req.HostPort < 0 || req.HostPort > 65535 {
+		return runtime.Instance{}, fmt.Errorf("Host port not valid.")
+	}
+
+	if req.ContainerPort < 1 || req.ContainerPort > 65535 {
+		return runtime.Instance{}, fmt.Errorf("Container port not valid.")
+	}
+
+	port := network.MustParsePort(
+        strconv.Itoa(req.ContainerPort) + "/tcp",
+    )
+
+    hostPort := ""
+    if req.HostPort != 0 {
+        hostPort = strconv.Itoa(req.HostPort)
+    }
+
+	resp, err := d.client.ContainerCreate(
+		ctx,
+		client.ContainerCreateOptions{
+			Name: "launchpad-" + req.JobID,
+
+			Config: &container.Config{
+				Image: req.ImageRef,
+
+				ExposedPorts: network.PortSet{
+					port: struct{}{},
+				},
+
+				Labels: map[string]string{
+                    "launchpad.managed": "true",
+                    "launchpad.job_id": req.JobID,
+                    "launchpad.application_id": req.ApplicationID,
+                    "launchpad.release_id": req.ReleaseID,
+                },
+			},
+
+			HostConfig: &container.HostConfig{
+				PortBindings: network.PortMap{
+					port: []network.PortBinding{
+                        {
+                            HostIP: netip.MustParseAddr(
+                                "127.0.0.1",
+                            ),
+                            HostPort: hostPort,
+                        },
+                    }, 
+				},
+			},
+		},
+	)
+
+	if err != nil {
+		    return runtime.Instance{}, fmt.Errorf("create container: %w", err)
+	}
+
+	_, err = d.client.ContainerStart(
+		ctx,
+		resp.ID,
+		client.ContainerStartOptions{},
+	)
+
+	if err != nil {
+		cleanupCtx, cancel := context.WithTimeout(
+			context.Background(), 10*time.Second,
+		)
+		defer cancel()
+
+		_, cleanupErr := d.client.ContainerRemove(
+			cleanupCtx,
+			resp.ID,
+			client.ContainerRemoveOptions{
+				Force: true,
+			},
+		)
+
+		if cleanupErr != nil {
+			return runtime.Instance{ID: resp.ID},
+                fmt.Errorf(
+                    "start container: %w; cleanup failed: %v",
+                    err, cleanupErr,
+                )
+		}
+
+		return runtime.Instance{}, fmt.Errorf("start container: %w", err)
+	}
+
+	return runtime.Instance{
+		ID: resp.ID,
+	}, nil
+}
+
