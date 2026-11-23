@@ -12,7 +12,7 @@ type Executor struct {
     runtime runtime.Runtime
 }
 
-func newExecutor (r runtime.Runtime) *Executor {
+func NewExecutor (r runtime.Runtime) *Executor {
 	return &Executor{
 		runtime: r,
 	}
