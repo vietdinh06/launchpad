@@ -31,7 +31,7 @@ type Runtime interface {
 		req DeployRequest,
 	) (Instance, error)
 
-	Instance(
+	Inspect(
 		ctx context.Context,
 		instanceID string,
 	) (InstanceStatus, error)
