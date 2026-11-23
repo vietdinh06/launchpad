@@ -4,8 +4,6 @@
 
 Launchpad is a lightweight, Heroku-inspired platform-as-a-service (PaaS) written in Go. It provides a REST API and a local command-line workflow for registering applications, creating versioned releases, and deploying Docker containers. PostgreSQL persists platform state, while Redis Streams coordinates asynchronous deployment work.
 
-> **Project stage:** This README documents the **target end-of-Phase-2 MVP**, not necessarily the current state of the repository. It describes the expected single-host experience. The example API payloads and paths should be checked against the final implementation before treating them as a published API contract.
-
 ## The flow at a glance
 
 ```text
@@ -198,7 +196,7 @@ curl -sS http://localhost:8080/applications
 
 ### 3. Create a release
 
-The following payload illustrates the **intended** release fields for the Phase 2 architecture. Align field names with the actual handler before using it unchanged:
+The following payload illustrates the **intended** release fields for the architecture. Align field names with the actual handler before using it unchanged:
 
 ```bash
 curl -sS -X POST "http://localhost:8080/applications/$APP_ID/releases" \
@@ -239,7 +237,7 @@ If your image listens on another internal port, set `container_port` accordingly
 
 ## API reference
 
-The Phase 2 application, release, and deployment endpoints are:
+The application, release, and deployment endpoints are:
 
 | Method | Route | Purpose |
 | --- | --- | --- |
@@ -288,7 +286,7 @@ launchpad logs <deployment-id>
 launchpad stop <deployment-id>
 ```
 
-**Important:** This is the **direct Docker CLI path** from the earlier project phase. It is not necessarily integrated with the Phase 2 PostgreSQL/Redis API workflow. Until a unified API-backed CLI is implemented, do not assume `launchpad list` and `GET /deployments/{id}` refer to exactly the same registry.
+**Important:** This is the **direct Docker CLI path** from the earlier project phase. It is not necessarily integrated with the PostgreSQL/Redis API workflow. Until a unified API-backed CLI is implemented, do not assume `launchpad list` and `GET /deployments/{id}` refer to exactly the same registry.
 
 ## Development and verification
 
@@ -324,7 +322,7 @@ Use `docker compose down -v` **only if** you want to delete Compose-managed volu
 
 ## Repository layout
 
-The exact tree may evolve; this is the **conceptual** Phase 2 organization:
+The exact tree may evolve; this is the organization:
 
 ```text
 launchpad/
@@ -353,17 +351,6 @@ launchpad/
 **Why run jobs asynchronously?** Building or starting containers can take longer than a typical API request. Returning a deployment ID immediately lets clients poll for progress and isolates slow runtime operations from HTTP request handling.
 
 **Why a runtime interface?** Application orchestration should not be coupled directly to the Docker client. A later Kubernetes implementation can fit behind the same higher-level deployment contracts.
-
-## Roadmap
-
-| Stage | Goal | Status in this README |
-| --- | --- | --- |
-| Phase 1 | Learn Docker internals; build a Go-powered local deployment CLI | Earlier foundation |
-| **Phase 2** | Go API, PostgreSQL application/release registry, Redis worker, Docker runtime deployment | **MVP described here** |
-| Phase 3 | Better developer UX, Git-based builds, routing/custom domains, health checks, observability | Planned |
-| Later | Kubernetes orchestration, cloud infrastructure/IaC, CI/CD automation, more production safeguards | Planned |
-
-Long-term exploration may include Traefik/Nginx, GitHub Actions, Prometheus/Grafana, Terraform, and AWS. **These are not Phase 2 MVP dependencies.**
 
 ## Security and limitations
 
