@@ -130,3 +130,29 @@ func (d *DockerRuntime) Deploy (ctx context.Context, req runtime.DeployRequest) 
 	}, nil
 }
 
+func (d *DockerRuntime) Inspect (ctx context.Context, instanceID string) (runtime.InstanceStatus, error) {
+	result, err := d.client.ContainerInspect(
+		ctx,
+		instanceID,
+		client.ContainerInspectOptions{},
+	)
+
+	if err != nil {
+		return runtime.InstanceStatus{}, fmt.Errorf("inspect container: %w", err)
+	}
+
+	state := result.Container.State
+
+    if state == nil {
+        return runtime.InstanceStatus{},
+            fmt.Errorf("container has no state")
+    }
+
+	return runtime.InstanceStatus{
+		ID: result.Container.ID,
+		Running: state.Running,
+		Status: string(state.Status),
+		ExitCode: state.ExitCode,
+	}, nil
+}
+
