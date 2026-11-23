@@ -1,93 +1,92 @@
-
 package main
 
 import (
-    "context"
-    "fmt"
-    "io"
-    "log"
-    "os"
-    "time"
+	"context"
+	"fmt"
+	"io"
+	"log"
+	"os"
+	"time"
 
-    "github.com/google/uuid"
-    "github.com/moby/moby/client"
+	"github.com/google/uuid"
+	"github.com/moby/moby/client"
 
-    "launchpad/internal/deployment"
-    "launchpad/internal/runtime"
-    "launchpad/internal/runtime/docker"
+	"launchpad/internal/deployment"
+	"launchpad/internal/runtime"
+	"launchpad/internal/runtime/docker"
 )
 
 func main() {
-    if err := run(); err != nil {
-        log.Fatal(err)
-    }
+	if err := run(); err != nil {
+		log.Fatal(err)
+	}
 }
 
 func run() error {
-    ctx, cancel := context.WithTimeout(
-        context.Background(),
-        60*time.Second,
-    )
-    defer cancel()
+	ctx, cancel := context.WithTimeout(
+		context.Background(),
+		60*time.Second,
+	)
+	defer cancel()
 
-    dockerClient, err := client.New(client.FromEnv)
+	dockerClient, err := client.New(client.FromEnv)
 
-    if err != nil {
-        return err
-    }
+	if err != nil {
+		return err
+	}
 
-    defer dockerClient.Close()
+	defer dockerClient.Close()
 
-    dockerRuntime := docker.New(dockerClient)
+	dockerRuntime := docker.New(dockerClient)
 
-    executor := deployment.NewExecutor(dockerRuntime)
+	executor := deployment.NewExecutor(dockerRuntime)
 
-    req := runtime.DeployRequest{
-        JobID:         uuid.NewString(),
-        ApplicationID: uuid.NewString(),
-        ReleaseID:     uuid.NewString(),
-        ImageRef:      "nginx:alpine",
-        ContainerPort: 80,
-        HostPort:      8090,
-    }
+	req := runtime.DeployRequest{
+		JobID:         uuid.NewString(),
+		ApplicationID: uuid.NewString(),
+		ReleaseID:     uuid.NewString(),
+		ImageRef:      "nginx:alpine",
+		ContainerPort: 80,
+		HostPort:      8090,
+	}
 
-    instance, err := executor.Execute(ctx, req)
+	instance, err := executor.Execute(ctx, req)
 
-    if err != nil {
-        if instance.ID != "" {
-            fmt.Println("Container ID:", instance.ID)
-        }
+	if err != nil {
+		if instance.ID != "" {
+			fmt.Println("Container ID:", instance.ID)
+		}
 
-        return err
-    }
+		return err
+	}
 
-    fmt.Println("Deployment successful!")
-    fmt.Println("Container ID:", instance.ID)
-    fmt.Println("Application: http://localhost:8090")
+	fmt.Println("Deployment successful!")
+	fmt.Println("Container ID:", instance.ID)
+	fmt.Println("Application: http://localhost:8090")
 
-    status, err := dockerRuntime.Inspect(
-        ctx, instance.ID,
-    )
+	status, err := dockerRuntime.Inspect(
+		ctx, instance.ID,
+	)
 
-    if err != nil {
-        return err
-    }
+	if err != nil {
+		return err
+	}
 
-    fmt.Printf("Container status: %+v\n", status)
+	fmt.Printf("Container status: %+v\n", status)
 
-    logs, err := dockerRuntime.Logs(
-        ctx, instance.ID,
-    )
+	logs, err := dockerRuntime.Logs(
+		ctx, instance.ID,
+	)
 
-    if err != nil {
-        return err
-    }
+	if err != nil {
+		return err
+	}
 
-    defer logs.Close()
+	defer logs.Close()
 
-    fmt.Println("Container logs:")
+	fmt.Println("Container logs:")
 
-    _, err = io.Copy(os.Stdout, logs)
+	_, err = io.Copy(os.Stdout, logs)
 
-    return err
+	return err
 }
