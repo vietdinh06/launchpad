@@ -156,3 +156,66 @@ func (d *DockerRuntime) Inspect (ctx context.Context, instanceID string) (runtim
 	}, nil
 }
 
+func (d *DockerRuntime) Stop (ctx context.Context, instanceID string) error {
+	timeout := 10
+
+	_, err := d.client.ContainerStop(
+		ctx,
+		instanceID,
+		client.ContainerStopOptions{
+			Timeout: &timeout,
+		},
+	)
+
+	if err != nil {
+        return fmt.Errorf("stop container: %w", err)
+	}
+
+	return nil
+}
+
+func (d *DockerRuntime) Remove (ctx context.Context, instanceID string) error {
+	_, err := d.client.ContainerRemove(
+		ctx,
+		instanceID,
+		client.ContainerRemoveOptions{},
+	)
+
+	if err != nil {
+        return fmt.Errorf("remove container: %w", err)
+	}
+
+	return nil
+}
+
+func (d *DockerRuntime) Logs (ctx context.Context, instanceID string) (io.ReadCloser, error) {
+	result, err := d.client.ContainerLogs(
+		ctx,
+		instanceID,
+		client.ContainerLogsOptions{
+			ShowStdout: true,
+            ShowStderr: true,
+            Tail:       "100",
+		},
+	)
+
+	if err != nil {
+        return nil, fmt.Errorf("container logs: %w", err)
+    }
+
+    reader, writer := io.Pipe()
+
+	go func() {
+        defer result.Close()
+
+        _, err := stdcopy.StdCopy(
+            writer,
+            writer,
+            result,
+        )
+
+        writer.CloseWithError(err)
+    }()
+
+    return reader, nil
+} 
