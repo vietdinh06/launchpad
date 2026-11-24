@@ -7,9 +7,9 @@ import (
 	"log"
 	"net/http"
 	"time"
-
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/redis/go-redis/v9"
 )
 
 type DeploymentJob struct {
@@ -66,6 +66,20 @@ func (s *Server) createDeployments(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "database error",
 			http.StatusInternalServerError)
 		return
+	}
+
+	_, err = s.queue.XAdd(ctx, &redis.XAddArgs {
+		Stream: "launchpad:deployments",
+		Values: map[string]any{
+			"job_id": job.ID,
+		},
+	}).Result()
+
+	if err != nil {
+		log.Printf(
+			"Redis notification failed for job %s: %v",
+			job.ID, err,
+		)
 	}
 
 	w.Header().Set("Location", "/deployments/"+job.ID)

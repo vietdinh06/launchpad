@@ -11,7 +11,7 @@ import (
 	"os"
 	"strings"
 	"time"
-
+	"github.com/redis/go-redis/v9"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -25,6 +25,7 @@ type Application struct {
 
 type Server struct {
 	db *pgxpool.Pool
+    queue *redis.Client
 }
 
 func main() {
@@ -49,7 +50,24 @@ func main() {
 		log.Fatalf("Unable to ping database: %v\n", err)
 	}
 
-	server := &Server{db: pool}
+	redisAddr := os.Getenv("REDIS_ADDR")
+	if redisAddr == "" {
+		redisAddr = "localhost:6379"
+	}
+
+	redisClient := redis.NewClient(&redis.Options{
+		Addr: redisAddr,
+	})
+	defer redisClient.Close()
+
+	if err := redisClient.Ping(ctx).Err(); err != nil {
+		log.Printf("Redis unavailable at startup: %v", err)
+	}
+
+	server := &Server{
+		db: pool,
+		queue: redisClient,
+	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", server.health)

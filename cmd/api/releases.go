@@ -20,6 +20,7 @@ type Release struct {
 	Version       int       `json:"version"`
 	ImageRef      string    `json:"image_ref"`
 	CreatedAt     time.Time `json:"created_at"`
+	ContainerPort int `json:"container_port"`
 }
 
 func (s *Server) createRelease(w http.ResponseWriter, r *http.Request) {
@@ -33,6 +34,7 @@ func (s *Server) createRelease(w http.ResponseWriter, r *http.Request) {
 
 	var req struct {
 		ImageRef string `json:"image_ref"`
+		ContainerPort int    `json:"container_port"`
 	}
 
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
@@ -55,6 +57,15 @@ func (s *Server) createRelease(w http.ResponseWriter, r *http.Request) {
 	if req.ImageRef == "" || len(req.ImageRef) > 512 {
 		http.Error(w, "invalid image reference",
 			http.StatusBadRequest)
+		return
+	}
+
+	if req.ContainerPort == 0 {
+    	req.ContainerPort = 80
+	}
+
+	if req.ContainerPort < 1 || req.ContainerPort > 65535 {
+		http.Error(w, "invalid container port", http.StatusBadRequest)
 		return
 	}
 
@@ -113,18 +124,20 @@ func (s *Server) createRelease(w http.ResponseWriter, r *http.Request) {
 		ApplicationID: appID,
 		Version:       nextVersion,
 		ImageRef:      req.ImageRef,
+		ContainerPort: req.ContainerPort,
 	}
 
-	err = tx.QueryRow(
-		ctx,
-		`INSERT INTO releases (id, application_id, version, image_ref)
-		VALUES ($1, $2, $3, $4)
+	err = tx.QueryRow(ctx,
+		`INSERT INTO releases
+			(id, application_id, version, image_ref, container_port)
+		VALUES ($1, $2, $3, $4, $5)
 		RETURNING created_at`,
 		release.ID,
 		release.ApplicationID,
 		release.Version,
 		release.ImageRef,
-	).Scan(&release.CreatedAt)
+		release.ContainerPort,
+	).Scan(&release.CreatedAt, &release.ContainerPort)
 
 	if err != nil {
 		log.Printf("create release: %v", err)
