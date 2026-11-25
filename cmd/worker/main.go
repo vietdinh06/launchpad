@@ -1,43 +1,43 @@
 package main
 
 import (
-    "context"
-    "errors"
-    "fmt"
-    "log"
-    "os"
-    "os/signal"
-    "strings"
-    "syscall"
-    "time"
+	"context"
+	"errors"
+	"fmt"
+	"log"
+	"os"
+	"os/signal"
+	"strings"
+	"syscall"
+	"time"
 
-    "github.com/google/uuid"
-    "github.com/jackc/pgx/v5"
-    "github.com/jackc/pgx/v5/pgxpool"
-    "github.com/moby/moby/client"
-    "github.com/redis/go-redis/v9"
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/moby/moby/client"
+	"github.com/redis/go-redis/v9"
 
-    "launchpad/internal/deployment"
-    "launchpad/internal/runtime"
-    dockerruntime "launchpad/internal/runtime/docker"
+	"launchpad/internal/deployment"
+	"launchpad/internal/runtime"
+	dockerruntime "launchpad/internal/runtime/docker"
 )
 
 const (
-    streamName = "launchpad:deployments"
-    groupName  = "launchpad-workers"
+	streamName = "launchpad:deployments"
+	groupName  = "launchpad-workers"
 )
 
 type Worker struct {
-    db       *pgxpool.Pool
-    queue    *redis.Client
-    executor *deployment.Executor
-    consumer string
+	db       *pgxpool.Pool
+	queue    *redis.Client
+	executor *deployment.Executor
+	consumer string
 }
 
 func main() {
-    if err := run(); err != nil {
-        log.Fatal(err)
-    }
+	if err := run(); err != nil {
+		log.Fatal(err)
+	}
 }
 
 func run() error {
@@ -49,20 +49,20 @@ func run() error {
 	defer stop()
 
 	dbURL := os.Getenv("DATABASE_URL")
-    if dbURL == "" {
-        return fmt.Errorf("DATABASE_URL is not set")
-    }
+	if dbURL == "" {
+		return fmt.Errorf("DATABASE_URL is not set")
+	}
 
-    db, err := pgxpool.New(ctx, dbURL)
+	db, err := pgxpool.New(ctx, dbURL)
 
-    if err != nil {
-        return err
-    }
-    defer db.Close()
+	if err != nil {
+		return err
+	}
+	defer db.Close()
 
-    if err := db.Ping(ctx); err != nil {
-        return fmt.Errorf("PostgreSQL: %w", err)
-    }
+	if err := db.Ping(ctx); err != nil {
+		return fmt.Errorf("PostgreSQL: %w", err)
+	}
 
 	redisAddr := os.Getenv("REDIS_ADDR")
 	if redisAddr == "" {
@@ -76,32 +76,32 @@ func run() error {
 
 	dockerClient, err := client.New(client.FromEnv)
 	if err != nil {
-        return err
-    }
-    defer dockerClient.Close()
+		return err
+	}
+	defer dockerClient.Close()
 
 	rt := dockerruntime.New(dockerClient)
 
 	worker := &Worker{
-		db: db,
-		queue: queue,
+		db:       db,
+		queue:    queue,
 		executor: deployment.NewExecutor(rt),
 		consumer: uuid.NewString(),
 	}
 
 	// Create the consumer group if it doesn't exist.
-    err = queue.XGroupCreateMkStream(
-        ctx, streamName, groupName, "0",
-    ).Err()
+	err = queue.XGroupCreateMkStream(
+		ctx, streamName, groupName, "0",
+	).Err()
 
-    if err != nil &&
-        !strings.Contains(err.Error(), "BUSYGROUP") {
-        log.Printf("Redis group setup: %v", err)
-    }
+	if err != nil &&
+		!strings.Contains(err.Error(), "BUSYGROUP") {
+		log.Printf("Redis group setup: %v", err)
+	}
 
 	log.Println("Launchpad deployment worker started")
 
-    return worker.loop(ctx)
+	return worker.loop(ctx)
 }
 
 func (w *Worker) loop(ctx context.Context) error {
@@ -118,16 +118,16 @@ func (w *Worker) loop(ctx context.Context) error {
 			ctx,
 			&redis.XReadGroupArgs{
 				Group:    groupName,
-                Consumer: w.consumer,
-                Streams:  []string{streamName, ">"},
-                Count:    10,
-                Block:    2 * time.Second,
+				Consumer: w.consumer,
+				Streams:  []string{streamName, ">"},
+				Count:    10,
+				Block:    2 * time.Second,
 			},
 		).Result()
 
-        if errors.Is(err, redis.Nil) {
-            continue
-        }
+		if errors.Is(err, redis.Nil) {
+			continue
+		}
 
 		if err != nil {
 			if ctx.Err() != nil {
@@ -136,34 +136,34 @@ func (w *Worker) loop(ctx context.Context) error {
 
 			log.Printf("Redis read: %v", err)
 
-            select {
-            case <-ctx.Done():
-                return nil
-            case <-time.After(2 * time.Second):
-            }
-            continue
+			select {
+			case <-ctx.Done():
+				return nil
+			case <-time.After(2 * time.Second):
+			}
+			continue
 		}
 
 		for _, stream := range streams {
 			for _, message := range stream.Messages {
-                jobID, ok := message.Values["job_id"].(string)
+				jobID, ok := message.Values["job_id"].(string)
 
 				if !ok {
-                    log.Printf("invalid message: %s", message.ID)
-                    // Skip poison messages.
-                    _ = w.ack(ctx, message.ID)
-                    continue
-                }
+					log.Printf("invalid message: %s", message.ID)
+					// Skip poison messages.
+					_ = w.ack(ctx, message.ID)
+					continue
+				}
 
-                if err := w.process(ctx, jobID); err != nil {
-                    log.Printf("process job %s: %v", jobID, err)
-                    // Leave message unacknowledged.
-                    continue
-                }
+				if err := w.process(ctx, jobID); err != nil {
+					log.Printf("process job %s: %v", jobID, err)
+					// Leave message unacknowledged.
+					continue
+				}
 
-                if err := w.ack(ctx, message.ID); err != nil {
-                    log.Printf("ack message: %v", err)
-                }
+				if err := w.ack(ctx, message.ID); err != nil {
+					log.Printf("ack message: %v", err)
+				}
 			}
 		}
 	}
@@ -204,10 +204,10 @@ func (w *Worker) scanPending(ctx context.Context) error {
 	}
 
 	err = rows.Err()
-    rows.Close()
-    if err != nil {
-        return err
-    }
+	rows.Close()
+	if err != nil {
+		return err
+	}
 
 	for _, id := range ids {
 		if ctx.Err() != nil {
@@ -215,7 +215,7 @@ func (w *Worker) scanPending(ctx context.Context) error {
 		}
 
 		if err := w.process(ctx, id); err != nil {
-		 	log.Printf("reconcile job %s: %v", id, err)
+			log.Printf("reconcile job %s: %v", id, err)
 		}
 	}
 
@@ -225,8 +225,8 @@ func (w *Worker) scanPending(ctx context.Context) error {
 func (w *Worker) process(ctx context.Context, jobID string) error {
 	var req runtime.DeployRequest
 
-    err := w.db.QueryRow(ctx,
-        `UPDATE deployment_jobs AS j
+	err := w.db.QueryRow(ctx,
+		`UPDATE deployment_jobs AS j
          SET status = 'running',
              updated_at = NOW()
          FROM releases AS r
@@ -239,31 +239,31 @@ func (w *Worker) process(ctx context.Context, jobID string) error {
              r.application_id,
              r.image_ref,
              r.container_port`,
-        jobID,
-    ).Scan(
-        &req.JobID,
-        &req.ReleaseID,
-        &req.ApplicationID,
-        &req.ImageRef,
-        &req.ContainerPort,
-    )
+		jobID,
+	).Scan(
+		&req.JobID,
+		&req.ReleaseID,
+		&req.ApplicationID,
+		&req.ImageRef,
+		&req.ContainerPort,
+	)
 
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
 	}
 
 	if err != nil {
-        return fmt.Errorf("claim job: %w", err)
+		return fmt.Errorf("claim job: %w", err)
 	}
 
 	req.HostPort = 0
 
-    log.Printf("Deploying job %s, image %s",
-        jobID, req.ImageRef)
+	log.Printf("Deploying job %s, image %s",
+		jobID, req.ImageRef)
 
-	deployCtx, cancel := context.WithTimeout(ctx, 2*time.Minute,)
+	deployCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 
-	instance, deployErr := w.executor.Execute(deployCtx, req,)
+	instance, deployErr := w.executor.Execute(deployCtx, req)
 	cancel()
 
 	status := "succeeded"
@@ -279,14 +279,13 @@ func (w *Worker) process(ctx context.Context, jobID string) error {
 		message := deployErr.Error()
 		errorMessage = &message
 		log.Printf("Deployment %s failed: %v",
-            jobID, deployErr)
+			jobID, deployErr)
 	}
 
 	finishCtx, finishCancel := context.WithTimeout(
 		context.Background(), 5*time.Second,
 	)
 	defer finishCancel()
-
 
 	tag, err := w.db.Exec(
 		finishCtx,
@@ -304,16 +303,16 @@ func (w *Worker) process(ctx context.Context, jobID string) error {
 	)
 
 	if err != nil {
-        return fmt.Errorf("finish job: %w", err)
+		return fmt.Errorf("finish job: %w", err)
 	}
 
 	if tag.RowsAffected() != 1 {
-        return fmt.Errorf(
-            "job %s was not in running state", jobID,
-        )
+		return fmt.Errorf(
+			"job %s was not in running state", jobID,
+		)
 	}
 
-	log.Print("Job %s finished: %s", jobID, status)
+	log.Printf("Job %s finished: %s", jobID, status)
 
 	return nil
 }

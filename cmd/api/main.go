@@ -5,16 +5,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/redis/go-redis/v9"
 	"io"
 	"log"
 	"net/http"
 	"os"
 	"strings"
 	"time"
-	"github.com/redis/go-redis/v9"
-	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type Application struct {
@@ -24,8 +24,8 @@ type Application struct {
 }
 
 type Server struct {
-	db *pgxpool.Pool
-    queue *redis.Client
+	db    *pgxpool.Pool
+	queue *redis.Client
 }
 
 func main() {
@@ -65,7 +65,7 @@ func main() {
 	}
 
 	server := &Server{
-		db: pool,
+		db:    pool,
 		queue: redisClient,
 	}
 

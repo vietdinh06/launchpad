@@ -20,7 +20,7 @@ type Release struct {
 	Version       int       `json:"version"`
 	ImageRef      string    `json:"image_ref"`
 	CreatedAt     time.Time `json:"created_at"`
-	ContainerPort int `json:"container_port"`
+	ContainerPort int       `json:"container_port"`
 }
 
 func (s *Server) createRelease(w http.ResponseWriter, r *http.Request) {
@@ -33,7 +33,7 @@ func (s *Server) createRelease(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		ImageRef string `json:"image_ref"`
+		ImageRef      string `json:"image_ref"`
 		ContainerPort int    `json:"container_port"`
 	}
 
@@ -61,7 +61,7 @@ func (s *Server) createRelease(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.ContainerPort == 0 {
-    	req.ContainerPort = 80
+		req.ContainerPort = 80
 	}
 
 	if req.ContainerPort < 1 || req.ContainerPort > 65535 {
@@ -131,7 +131,7 @@ func (s *Server) createRelease(w http.ResponseWriter, r *http.Request) {
 		`INSERT INTO releases
 			(id, application_id, version, image_ref, container_port)
 		VALUES ($1, $2, $3, $4, $5)
-		RETURNING created_at`,
+		RETURNING created_at, container_port`,
 		release.ID,
 		release.ApplicationID,
 		release.Version,
