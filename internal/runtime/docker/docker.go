@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log"
 	"net/netip"
 	"strconv"
 	"strings"
@@ -55,6 +56,63 @@ func (d *DockerRuntime) Deploy(ctx context.Context, req runtime.DeployRequest) (
 		hostPort = strconv.Itoa(req.HostPort)
 	}
 
+	labels := map[string]string{
+		"launchpad.managed":        "true",
+		"launchpad.job_id":         req.JobID,
+		"launchpad.application_id": req.ApplicationID,
+		"launchpad.release_id":     req.ReleaseID,
+	}
+
+	hostConfig := &container.HostConfig{}
+
+	var networkingConfig *network.NetworkingConfig
+
+	if req.NetworkName != "" {
+		if req.Hostname == "" {
+			return runtime.Instance{}, fmt.Errorf("routed deployment requires hostname")
+		}
+
+		if req.HostPort != 0 {
+			return runtime.Instance{}, fmt.Errorf("routed deployment cannot publish host porte")
+		}
+
+		routerName := "lp-" + req.JobID
+
+		labels["traefik.enable"] = "true"
+		labels["traefik.docker.network"] = req.NetworkName
+		labels["traefik.http.routers."+routerName+".rule"] = "Host(`" + req.Hostname + "`)"
+
+    	labels["traefik.http.routers."+routerName+".entrypoints"] = "web"
+
+    	labels["traefik.http.routers."+routerName+".service"] =routerName
+
+    	labels["traefik.http.services."+routerName+".loadbalancer.server.port"] = strconv.Itoa(req.ContainerPort)
+
+		networkingConfig = &network.NetworkingConfig{
+			EndpointsConfig: map[string]*network.EndpointSettings {
+				req.NetworkName: {},
+			},
+		}
+	} else {
+		port := network.MustParsePort(strconv.Itoa(req.ContainerPort) + "/tcp",)
+
+		hostPort := ""
+		if req.HostPort != 0 {
+			hostPort = strconv.Itoa(req.HostPort)
+		}
+
+		hostConfig.PortBindings = network.PortMap{
+			port: []network.PortBinding{
+				{
+					HostIP: netip.MustParseAddr(
+						"127.0.0.1",
+					),
+					HostPort: hostPort,
+				},
+			},
+		}
+	}
+
 	resp, err := d.client.ContainerCreate(
 		ctx,
 		client.ContainerCreateOptions{
@@ -67,26 +125,11 @@ func (d *DockerRuntime) Deploy(ctx context.Context, req runtime.DeployRequest) (
 					port: struct{}{},
 				},
 
-				Labels: map[string]string{
-					"launchpad.managed":        "true",
-					"launchpad.job_id":         req.JobID,
-					"launchpad.application_id": req.ApplicationID,
-					"launchpad.release_id":     req.ReleaseID,
-				},
+				Labels: labels,
 			},
 
-			HostConfig: &container.HostConfig{
-				PortBindings: network.PortMap{
-					port: []network.PortBinding{
-						{
-							HostIP: netip.MustParseAddr(
-								"127.0.0.1",
-							),
-							HostPort: hostPort,
-						},
-					},
-				},
-			},
+			HostConfig: hostConfig,
+			NetworkingConfig: networkingConfig,
 		},
 	)
 

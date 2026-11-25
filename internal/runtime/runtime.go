@@ -12,6 +12,9 @@ type DeployRequest struct {
 	ImageRef      string
 	ContainerPort int
 	HostPort      int
+
+	NetworkName   string
+	Hostname      string
 }
 
 type Instance struct {
