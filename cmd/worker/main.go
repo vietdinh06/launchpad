@@ -257,6 +257,8 @@ func (w *Worker) process(ctx context.Context, jobID string) error {
 	}
 
 	req.HostPort = 0
+	req.NetworkName = "launchpad-proxy"
+	req.Hostname = "deploy-" + req.JobID + ".localhost"
 
 	log.Printf("Deploying job %s, image %s",
 		jobID, req.ImageRef)

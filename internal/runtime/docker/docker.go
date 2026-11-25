@@ -51,11 +51,6 @@ func (d *DockerRuntime) Deploy(ctx context.Context, req runtime.DeployRequest) (
 		strconv.Itoa(req.ContainerPort) + "/tcp",
 	)
 
-	hostPort := ""
-	if req.HostPort != 0 {
-		hostPort = strconv.Itoa(req.HostPort)
-	}
-
 	labels := map[string]string{
 		"launchpad.managed":        "true",
 		"launchpad.job_id":         req.JobID,

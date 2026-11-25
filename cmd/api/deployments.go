@@ -20,6 +20,7 @@ type DeploymentJob struct {
 	ErrorMessage *string   `json:"error_message"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
+	URL			 string		`json:"url,omitempty"`
 }
 
 func (s *Server) createDeployments(w http.ResponseWriter, r *http.Request) {
@@ -141,5 +142,12 @@ func (s *Server) getDeployments(w http.ResponseWriter, r *http.Request) {
 		job.ErrorMessage = &errorMessage.String
 	}
 
+	if job.Status == "succeeded" {
+		job.URL = deploymentURL(job.ID)
+	}
 	writeJSON(w, http.StatusOK, job)
+}
+
+func deploymentURL(jobID string) string {
+	return "https://deploy-" + jobID + ".localhost:8000"
 }
