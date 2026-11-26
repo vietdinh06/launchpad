@@ -13,8 +13,8 @@ type DeployRequest struct {
 	ContainerPort int
 	HostPort      int
 
-	NetworkName   string
-	Hostname      string
+	NetworkName string
+	Hostname    string
 }
 
 type Instance struct {

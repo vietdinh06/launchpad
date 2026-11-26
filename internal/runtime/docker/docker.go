@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"log"
 	"net/netip"
 	"strconv"
 	"strings"
@@ -77,20 +76,18 @@ func (d *DockerRuntime) Deploy(ctx context.Context, req runtime.DeployRequest) (
 		labels["traefik.docker.network"] = req.NetworkName
 		labels["traefik.http.routers."+routerName+".rule"] = "Host(`" + req.Hostname + "`)"
 
-    	labels["traefik.http.routers."+routerName+".entrypoints"] = "web"
+		labels["traefik.http.routers."+routerName+".entrypoints"] = "web"
 
-    	labels["traefik.http.routers."+routerName+".service"] =routerName
+		labels["traefik.http.routers."+routerName+".service"] = routerName
 
-    	labels["traefik.http.services."+routerName+".loadbalancer.server.port"] = strconv.Itoa(req.ContainerPort)
+		labels["traefik.http.services."+routerName+".loadbalancer.server.port"] = strconv.Itoa(req.ContainerPort)
 
 		networkingConfig = &network.NetworkingConfig{
-			EndpointsConfig: map[string]*network.EndpointSettings {
+			EndpointsConfig: map[string]*network.EndpointSettings{
 				req.NetworkName: {},
 			},
 		}
 	} else {
-		port := network.MustParsePort(strconv.Itoa(req.ContainerPort) + "/tcp",)
-
 		hostPort := ""
 		if req.HostPort != 0 {
 			hostPort = strconv.Itoa(req.HostPort)
@@ -123,7 +120,7 @@ func (d *DockerRuntime) Deploy(ctx context.Context, req runtime.DeployRequest) (
 				Labels: labels,
 			},
 
-			HostConfig: hostConfig,
+			HostConfig:       hostConfig,
 			NetworkingConfig: networkingConfig,
 		},
 	)
