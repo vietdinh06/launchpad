@@ -29,6 +29,11 @@ type Server struct {
 }
 
 func main() {
+	deployToken := os.Getenv("LAUNCHPAD_DEPLOY_TOKEN")
+	if deployToken == "" {
+		log.Fatal("LAUNCHPAD_DEPLOY_TOKEN not set")
+	}
+
 	dbURL := os.Getenv("DATABASE_URL")
 	if dbURL == "" {
 		log.Fatal("DATABASE_URL is not set")
@@ -71,12 +76,12 @@ func main() {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", server.health)
-	mux.HandleFunc("POST /applications", server.createApplication)
+	mux.HandleFunc("POST /applications", requireDeployToken(deployToken, server.createApplication))
 	mux.HandleFunc("GET /applications", server.listApplications)
 	mux.HandleFunc("GET /applications/{id}", server.getApplication)
-	mux.HandleFunc("POST /applications/{id}/releases", server.createRelease)
+	mux.HandleFunc("POST /applications/{id}/releases", requireDeployToken(deployToken, server.createRelease))
 	mux.HandleFunc("GET /applications/{id}/releases", server.listReleases)
-	mux.HandleFunc("POST /releases/{id}/deployments", server.createDeployments)
+	mux.HandleFunc("POST /releases/{id}/deployments", requireDeployToken(deployToken,server.createDeployments))
 	mux.HandleFunc("GET /deployments/{id}", server.getDeployments)
 
 	httpServer := &http.Server{
