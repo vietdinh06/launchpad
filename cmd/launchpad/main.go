@@ -17,6 +17,7 @@ import (
 type APIClient struct {
 	baseURL string
 	http    *http.Client
+	token   string
 }
 
 func newAPIClient(baseURL string) *APIClient {
@@ -25,6 +26,7 @@ func newAPIClient(baseURL string) *APIClient {
 		http: &http.Client{
 			Timeout: 15 * time.Second,
 		},
+		token: os.Getenv("LAUNCHPAD_DEPLOY_TOKEN"),
 	}
 }
 
